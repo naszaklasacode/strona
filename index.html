@@ -1,50 +1,55 @@
 <!DOCTYPE html>
 <html lang="pl">
 <head>
-<meta charset="UTF-8">
-<title>TEST GLB</title>
-<style>
-body { margin: 0; overflow: hidden; background:black; }
-</style>
+  <meta charset="UTF-8">
+  <title>DEBUG GLB</title>
+  <style> body { margin:0; overflow:hidden; background:black; } </style>
 </head>
 <body>
-
 <h2 style="position:absolute;top:10px;left:10px;color:white;z-index:10">
-  TEST GLB z GitHub Pages
+  DEBUG: próbuję załadować model
 </h2>
-
 <script type="module">
-import * as THREE from 'https://unpkg.com/three@0.158.0/build/three.module.js';
-import { GLTFLoader } from 'https://unpkg.com/three@0.158.0/examples/jsm/loaders/GLTFLoader.js';
+  import * as THREE from 'https://unpkg.com/three@0.158.0/build/three.module.js';
+  import { GLTFLoader } from 'https://unpkg.com/three@0.158.0/examples/jsm/loaders/GLTFLoader.js';
 
-const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(75, innerWidth / innerHeight, 0.1, 100);
-camera.position.z = 2;
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 100);
+  camera.position.z = 2;
 
-const renderer = new THREE.WebGLRenderer({ antialias:true });
-renderer.setSize(innerWidth, innerHeight);
-document.body.appendChild(renderer.domElement);
+  const renderer = new THREE.WebGLRenderer({ antialias:true });
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  document.body.appendChild(renderer.domElement);
 
-scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 1));
+  const light = new THREE.HemisphereLight(0xffffff, 0x444444, 1);
+  scene.add(light);
 
-const loader = new GLTFLoader();
-loader.load('palm.glb',
-  (gltf) => {
-    const model = gltf.scene;
-    model.scale.set(0.5,0.5,0.5);
-    scene.add(model);
-    console.log("✅ Model załadowany");
-  },
-  (xhr)=> console.log((xhr.loaded / xhr.total * 100) + '% loaded'),
-  (err)=> console.error("❌ Błąd", err)
-);
+  const loader = new GLTFLoader();
+  loader.load(
+    'palm.glb',
+    (gltf) => {
+      console.log("✅ Model załadowany", gltf);
+      scene.add(gltf.scene);
+    },
+    (xhr) => {
+      console.log(`Ładowanie: ${(xhr.loaded/xhr.total*100).toFixed(2)}%`);
+    },
+    (error) => {
+      console.error("❌ Błąd ładowania modelu:", error);
+      const msg = document.createElement('div');
+      msg.style.color = 'red';
+      msg.style.position = 'absolute';
+      msg.style.zIndex = '9999';
+      msg.textContent = 'Błąd ładowania modelu: ' + error;
+      document.body.appendChild(msg);
+    }
+  );
 
-function anim(){
-  requestAnimationFrame(anim);
-  renderer.render(scene, camera);
-}
-anim();
-
+  function animate(){
+    requestAnimationFrame(animate);
+    renderer.render(scene, camera);
+  }
+  animate();
 </script>
 </body>
 </html>
