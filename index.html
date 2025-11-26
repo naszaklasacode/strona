@@ -1,55 +1,274 @@
 <!DOCTYPE html>
 <html lang="pl">
 <head>
-  <meta charset="UTF-8">
-  <title>DEBUG GLB</title>
-  <style> body { margin:0; overflow:hidden; background:black; } </style>
+<meta charset="UTF-8">
+<title>WebXR AR – Kostki (Quest 3S)</title>
+<style>
+  body { margin: 0; overflow: hidden; }
+  canvas { display: block; }
+</style>
 </head>
 <body>
-<h2 style="position:absolute;top:10px;left:10px;color:white;z-index:10">
-  DEBUG: próbuję załadować model
-</h2>
 <script type="module">
-  import * as THREE from 'https://unpkg.com/three@0.158.0/build/three.module.js';
-  import { GLTFLoader } from 'https://unpkg.com/three@0.158.0/examples/jsm/loaders/GLTFLoader.js';
 
-  const scene = new THREE.Scene();
-  const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 100);
-  camera.position.z = 2;
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.162.0/build/three.module.js';
+import { ARButton } from 'https://cdn.jsdelivr.net/npm/three@0.162.0/examples/jsm/webxr/ARButton.js';
+import * as CANNON from 'https://cdn.jsdelivr.net/npm/cannon-es@0.20.0/dist/cannon-es.js';
 
-  const renderer = new THREE.WebGLRenderer({ antialias:true });
-  renderer.setSize(window.innerWidth, window.innerHeight);
-  document.body.appendChild(renderer.domElement);
+let scene, camera, renderer;
+let world;
+let cubes = [];
+let controllers = [];
+let prevPos = [];
 
-  const light = new THREE.HemisphereLight(0xffffff, 0x444444, 1);
-  scene.add(light);
+// Dźwięki
+const addSound = new Audio('add.mp3'); // przy dodaniu kostki
+const throwSound = new Audio('pilka.mp3'); // przy uderzeniu o podłogę
 
-  const loader = new GLTFLoader();
-  loader.load(
-    'palm.glb',
-    (gltf) => {
-      console.log("✅ Model załadowany", gltf);
-      scene.add(gltf.scene);
-    },
-    (xhr) => {
-      console.log(`Ładowanie: ${(xhr.loaded/xhr.total*100).toFixed(2)}%`);
-    },
-    (error) => {
-      console.error("❌ Błąd ładowania modelu:", error);
-      const msg = document.createElement('div');
-      msg.style.color = 'red';
-      msg.style.position = 'absolute';
-      msg.style.zIndex = '9999';
-      msg.textContent = 'Błąd ładowania modelu: ' + error;
-      document.body.appendChild(msg);
+// Muzyka w tle
+const backgroundMusic = new Audio('muzyka.mp3');
+backgroundMusic.loop = true;
+backgroundMusic.volume = 0.2;
+let musicStarted = false;
+
+// ---------- KOSZ NA ŚMIECI ----------
+let trashMesh, trashBody;
+
+init();
+animate();
+
+/* ---------- INIT ---------- */
+function init() {
+    scene = new THREE.Scene();
+    camera = new THREE.PerspectiveCamera(70, innerWidth/innerHeight, 0.01, 50);
+
+    // ---------- TŁO 360 ----------
+    const sphereGeometry = new THREE.SphereGeometry(10, 60, 40);
+    sphereGeometry.scale(-1, 1, 1); // odwracamy sferę do środka
+    const sphereMaterial = new THREE.MeshBasicMaterial({
+        map: new THREE.TextureLoader().load('tlo.jpg')
+    });
+    const sphere = new THREE.Mesh(sphereGeometry, sphereMaterial);
+    scene.add(sphere);
+
+    renderer = new THREE.WebGLRenderer({alpha:true, antialias:true});
+    renderer.setSize(innerWidth, innerHeight);
+    renderer.xr.enabled = true;
+    document.body.appendChild(renderer.domElement);
+
+    document.body.appendChild(ARButton.createButton(renderer, {
+        requiredFeatures: ['local-floor']
+    }));
+
+    // ---------- FIZYKA ----------
+    world = new CANNON.World();
+    world.gravity.set(0, -6, 0);
+    world.solver.iterations = 20;
+    world.allowSleep = true;
+
+    const floor = new CANNON.Body({
+        type: CANNON.Body.STATIC,
+        shape: new CANNON.Plane(),
+    });
+    floor.quaternion.setFromEuler(-Math.PI / 2, 0, 0);
+    floor.position.y = -1;
+    world.addBody(floor);
+
+    const light = new THREE.HemisphereLight(0xffffff, 0x444444, 1);
+    scene.add(light);
+
+    // ---------- KOSZ NA ŚMIECI ----------
+    const trashGeometry = new THREE.CylinderGeometry(0.2, 0.2, 0.3, 16);
+    const trashMaterial = new THREE.MeshStandardMaterial({ color: 0x00ff00, transparent: true, opacity: 0.5 });
+    trashMesh = new THREE.Mesh(trashGeometry, trashMaterial);
+    trashMesh.position.set(0, -0.85, -1);
+    scene.add(trashMesh);
+
+    trashBody = new CANNON.Body({
+        mass: 0,
+        shape: new CANNON.Cylinder(0.2, 0.2, 0.3, 16),
+        position: new CANNON.Vec3(0, -0.85, -1)
+    });
+    world.addBody(trashBody);
+
+    // ---------- KONTROLERY ----------
+    for(let i = 0; i < 2; i++){
+        const controller = renderer.xr.getController(i);
+        controller.userData.selected = null;
+        controller.userData.velocity = new CANNON.Vec3(0,0,0);
+
+        controller.addEventListener('selectstart', ()=>{
+            if(!musicStarted) {
+                backgroundMusic.play().catch(err => console.log("Muzyka nie mogła się odtworzyć:", err));
+                musicStarted = true;
+            }
+            createCube(controller);
+        });
+
+        controller.addEventListener('squeezestart', ()=>{ grabCube(controller); });
+        controller.addEventListener('squeezeend', ()=>{ releaseCube(controller); });
+
+        // ---------- WIRTUALNE RECE ----------
+        const geometry = new THREE.CylinderGeometry(0.02, 0.02, 0.1, 8);
+        const material = new THREE.MeshStandardMaterial({ color: i===0 ? 0xff0000 : 0x0000ff });
+        const handMesh = new THREE.Mesh(geometry, material);
+        handMesh.rotation.x = Math.PI/2;
+        controller.add(handMesh);
+
+        scene.add(controller);
+        controllers.push(controller);
     }
-  );
 
-  function animate(){
-    requestAnimationFrame(animate);
-    renderer.render(scene, camera);
-  }
-  animate();
+    window.addEventListener('resize', onWindowResize);
+}
+
+/* ---------- KOSTKA ---------- */
+function createCube(controller){
+    const pos = new THREE.Vector3();
+    controller.getWorldPosition(pos);
+    const dir = new THREE.Vector3(0,0,-1).applyQuaternion(controller.quaternion);
+    pos.add(dir.multiplyScalar(0.6));
+    const size = 0.12;
+
+    const geo = new THREE.BoxGeometry(size, size, size);
+    const mat = new THREE.MeshStandardMaterial({ color: new THREE.Color(Math.random(), Math.random(), Math.random()) });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.copy(pos);
+    scene.add(mesh);
+
+    const body = new CANNON.Body({
+        mass: 1,
+        shape: new CANNON.Box(new CANNON.Vec3(size/2, size/2, size/2))
+    });
+    body.position.set(pos.x, pos.y, pos.z);
+    body.linearDamping = 0.5;
+    body.angularDamping = 0.5;
+    body.sleepSpeedLimit = 0.1;
+    body.sleepTimeLimit = 1;
+    world.addBody(body);
+
+    cubes.push({ mesh, body, grabbed: false, size, played: false });
+
+    addSound.currentTime = 0;
+    addSound.play();
+}
+
+/* ---------- CHWYT ---------- */
+function grabCube(controller){
+    const pos = new THREE.Vector3();
+    controller.getWorldPosition(pos);
+    for (let cube of cubes){
+        if (!cube.grabbed && cube.mesh.position.distanceTo(pos) < 0.2){
+            cube.grabbed = true;
+            cube.body.type = CANNON.Body.KINEMATIC;
+            cube.body.velocity.set(0,0,0);
+            cube.body.angularVelocity.set(0,0,0);
+            cube.body.wakeUp();
+
+            controller.attach(cube.mesh);
+            cube.mesh.position.set(0, 0, 0);
+
+            controller.userData.selected = cube;
+            break;
+        }
+    }
+}
+
+/* ---------- RZUT ---------- */
+function releaseCube(controller){
+    const cube = controller.userData.selected;
+    if(!cube) return;
+
+    cube.grabbed = false;
+    scene.attach(cube.mesh);
+
+    cube.body.type = CANNON.Body.DYNAMIC;
+    cube.body.mass = 1;
+    cube.body.updateMassProperties();
+    cube.body.wakeUp();
+
+    const vel = controller.userData.velocity;
+    cube.body.velocity.set(vel.x*2, vel.y*2, vel.z*2);
+    cube.body.angularVelocity.set(
+        (Math.random()-0.5)*2,
+        (Math.random()-0.5)*2,
+        (Math.random()-0.5)*2
+    );
+
+    controller.userData.selected = null;
+}
+
+/* ---------- PRĘDKOŚĆ KONTROLERA ---------- */
+function updateControllerVelocity(){
+    controllers.forEach((controller, i)=>{
+        const pos = new THREE.Vector3();
+        controller.getWorldPosition(pos);
+        if (prevPos[i]){
+            const v = pos.clone().sub(prevPos[i]).multiplyScalar(60);
+            controller.userData.velocity.set(v.x, v.y, v.z);
+        }
+        prevPos[i] = pos.clone();
+    });
+}
+
+/* ---------- KOSZ FUNKCJA ---------- */
+function checkTrash() {
+    for (let i = cubes.length-1; i >= 0; i--) {
+        const cube = cubes[i];
+        const dx = cube.body.position.x - trashBody.position.x;
+        const dy = cube.body.position.y - trashBody.position.y;
+        const dz = cube.body.position.z - trashBody.position.z;
+        const distance = Math.sqrt(dx*dx + dy*dy + dz*dz);
+        if(distance < 0.2) {
+            world.removeBody(cube.body);
+            scene.remove(cube.mesh);
+            cubes.splice(i, 1);
+        }
+    }
+}
+
+/* ---------- LOOP ---------- */
+function animate(){
+    renderer.setAnimationLoop(()=>{
+        world.step(1/60);
+
+        for (let i = cubes.length-1; i>=0; i--){
+            const cube = cubes[i];
+            if(!cube.grabbed){
+                cube.mesh.position.copy(cube.body.position);
+                cube.mesh.quaternion.copy(cube.body.quaternion);
+
+                if(!cube.played && cube.body.position.y <= -0.9){
+                    const speed = cube.body.velocity.length();
+                    if(speed > 1){
+                        throwSound.volume = Math.min(speed/1, 1);
+                        throwSound.currentTime = 0;
+                        throwSound.play();
+                    }
+                    cube.played = true;
+                }
+            } else {
+                const ctrl = controllers.find(c => c.userData.selected === cube);
+                if(ctrl){
+                    const p = new THREE.Vector3();
+                    ctrl.getWorldPosition(p);
+                    cube.body.position.set(p.x, p.y, p.z);
+                }
+            }
+        }
+
+        updateControllerVelocity();
+        checkTrash(); // sprawdzamy czy kostka wpadła do kosza
+        renderer.render(scene, camera);
+    });
+}
+
+/* ---------- RESIZE ---------- */
+function onWindowResize(){
+    camera.aspect = innerWidth/innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(innerWidth, innerHeight);
+}
 </script>
 </body>
 </html>
