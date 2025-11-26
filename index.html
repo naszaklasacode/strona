@@ -1,18 +1,18 @@
 <!DOCTYPE html>
 <html lang="pl">
 <head>
-<meta charset="UTF-8">
-<title>WebXR AR – Kostki (Quest 3S)</title>
-<style>
-  body { margin: 0; overflow: hidden; }
-  canvas { display: block; }
-</style>
+  <meta charset="UTF-8">
+  <title>WebXR AR – Kostki (Quest 3S)</title>
+  <style>
+    body { margin: 0; overflow: hidden; }
+    canvas { display: block; }
+  </style>
 </head>
 <body>
 <script type="module">
-
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.162.0/build/three.module.js';
 import { ARButton } from 'https://cdn.jsdelivr.net/npm/three@0.162.0/examples/jsm/webxr/ARButton.js';
+import { GLTFLoader } from 'https://cdn.jsdelivr.net/npm/three@0.162.0/examples/jsm/loaders/GLTFLoader.js';
 import * as CANNON from 'https://cdn.jsdelivr.net/npm/cannon-es@0.20.0/dist/cannon-es.js';
 
 let scene, camera, renderer;
@@ -22,8 +22,8 @@ let controllers = [];
 let prevPos = [];
 
 // Dźwięki
-const addSound = new Audio('add.mp3'); // przy dodaniu kostki
-const throwSound = new Audio('pilka.mp3'); // przy uderzeniu o podłogę
+const addSound = new Audio('add.mp3');
+const throwSound = new Audio('pilka.mp3');
 
 // Muzyka w tle
 const backgroundMusic = new Audio('muzyka.mp3');
@@ -44,7 +44,7 @@ function init() {
 
     // ---------- TŁO 360 ----------
     const sphereGeometry = new THREE.SphereGeometry(10, 60, 40);
-    sphereGeometry.scale(-1, 1, 1); // odwracamy sferę do środka
+    sphereGeometry.scale(-1, 1, 1);
     const sphereMaterial = new THREE.MeshBasicMaterial({
         map: new THREE.TextureLoader().load('tlo.jpg')
     });
@@ -77,19 +77,21 @@ function init() {
     const light = new THREE.HemisphereLight(0xffffff, 0x444444, 1);
     scene.add(light);
 
-    // ---------- KOSZ NA ŚMIECI ----------
-    const trashGeometry = new THREE.CylinderGeometry(0.2, 0.2, 0.3, 16);
-    const trashMaterial = new THREE.MeshStandardMaterial({ color: 0x00ff00, transparent: true, opacity: 0.5 });
-    trashMesh = new THREE.Mesh(trashGeometry, trashMaterial);
-    trashMesh.position.set(0, -0.85, -1);
-    scene.add(trashMesh);
+    // ---------- KOSZ NA ŚMIECI Z MODELEM PALM.GLB ----------
+    const loader = new GLTFLoader();
+    loader.load('palm.glb', (gltf) => {
+        trashMesh = gltf.scene;
+        trashMesh.scale.set(0.5, 0.5, 0.5); // dopasuj rozmiar
+        trashMesh.position.set(0, -0.85, -1);
+        scene.add(trashMesh);
 
-    trashBody = new CANNON.Body({
-        mass: 0,
-        shape: new CANNON.Cylinder(0.2, 0.2, 0.3, 16),
-        position: new CANNON.Vec3(0, -0.85, -1)
+        // przybliżony box fizyczny
+        const box = new CANNON.Box(new CANNON.Vec3(0.25, 0.25, 0.25));
+        trashBody = new CANNON.Body({ mass: 0 });
+        trashBody.addShape(box);
+        trashBody.position.set(0, -0.85, -1);
+        world.addBody(trashBody);
     });
-    world.addBody(trashBody);
 
     // ---------- KONTROLERY ----------
     for(let i = 0; i < 2; i++){
@@ -213,6 +215,7 @@ function updateControllerVelocity(){
 
 /* ---------- KOSZ FUNKCJA ---------- */
 function checkTrash() {
+    if(!trashBody) return; // upewniamy się, że model jest załadowany
     for (let i = cubes.length-1; i >= 0; i--) {
         const cube = cubes[i];
         const dx = cube.body.position.x - trashBody.position.x;
