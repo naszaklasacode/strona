@@ -1,277 +1,109 @@
 <!DOCTYPE html>
 <html lang="pl">
 <head>
-  <meta charset="UTF-8">
-  <title>WebXR AR – Kostki (Quest 3S)</title>
-  <style>
-    body { margin: 0; overflow: hidden; }
-    canvas { display: block; }
-  </style>
+<meta charset="UTF-8">
+<title>VR Game Android / Meta Quest</title>
+<style>
+  body { margin: 0; overflow: hidden; }
+  canvas { display: block; }
+</style>
 </head>
 <body>
 <script type="module">
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.162.0/build/three.module.js';
-import { ARButton } from 'https://cdn.jsdelivr.net/npm/three@0.162.0/examples/jsm/webxr/ARButton.js';
-import { GLTFLoader } from 'https://cdn.jsdelivr.net/npm/three@0.162.0/examples/jsm/loaders/GLTFLoader.js';
-import * as CANNON from 'https://cdn.jsdelivr.net/npm/cannon-es@0.20.0/dist/cannon-es.js';
+import { XRControllerModelFactory } from 'https://cdn.jsdelivr.net/npm/three@0.162.0/examples/jsm/webxr/XRControllerModelFactory.js';
+import { XRHandModelFactory } from 'https://cdn.jsdelivr.net/npm/three@0.162.0/examples/jsm/webxr/XRHandModelFactory.js';
+import { VRButton } from 'https://cdn.jsdelivr.net/npm/three@0.162.0/examples/jsm/webxr/VRButton.js';
 
-let scene, camera, renderer;
-let world;
-let cubes = [];
-let controllers = [];
-let prevPos = [];
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x87ceeb);
 
-// Dźwięki
-const addSound = new Audio('add.mp3');
-const throwSound = new Audio('pilka.mp3');
+// Kamera
+const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 50);
+camera.position.set(0, 1.6, 3);
 
-// Muzyka w tle
-const backgroundMusic = new Audio('muzyka.mp3');
-backgroundMusic.loop = true;
-backgroundMusic.volume = 0.2;
-let musicStarted = false;
+// Renderer
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.xr.enabled = true;
+document.body.appendChild(renderer.domElement);
 
-// ---------- KOSZ NA ŚMIECI ----------
-let trashMesh, trashBody;
+// VR Button
+document.body.appendChild(VRButton.createButton(renderer));
 
-init();
-animate();
+// Światło
+const light = new THREE.HemisphereLight(0xffffff, 0x444444, 1);
+scene.add(light);
 
-/* ---------- INIT ---------- */
-function init() {
-    scene = new THREE.Scene();
-    camera = new THREE.PerspectiveCamera(70, innerWidth/innerHeight, 0.01, 50);
+// Podłoga
+const floorGeometry = new THREE.PlaneGeometry(10, 10);
+const floorMaterial = new THREE.MeshStandardMaterial({ color: 0x228822 });
+const floor = new THREE.Mesh(floorGeometry, floorMaterial);
+floor.rotation.x = -Math.PI/2;
+floor.position.y = 0;
+scene.add(floor);
 
-    // ---------- TŁO 360 ----------
-    const sphereGeometry = new THREE.SphereGeometry(10, 60, 40);
-    sphereGeometry.scale(-1, 1, 1);
-    const sphereMaterial = new THREE.MeshBasicMaterial({
-        map: new THREE.TextureLoader().load('tlo.jpg')
-    });
-    const sphere = new THREE.Mesh(sphereGeometry, sphereMaterial);
-    scene.add(sphere);
+// Ściany pokoju
+const wallMaterial = new THREE.MeshStandardMaterial({ color: 0x888888, side: THREE.DoubleSide });
+const wallGeometryX = new THREE.PlaneGeometry(10, 3); // szerokość, wysokość
+const wallGeometryZ = new THREE.PlaneGeometry(10, 3);
 
-    renderer = new THREE.WebGLRenderer({alpha:true, antialias:true});
-    renderer.setSize(innerWidth, innerHeight);
-    renderer.xr.enabled = true;
-    document.body.appendChild(renderer.domElement);
+const wallLeft = new THREE.Mesh(wallGeometryX, wallMaterial);
+wallLeft.position.set(-5, 1.5, 0);
+wallLeft.rotation.y = Math.PI / 2;
+scene.add(wallLeft);
 
-    document.body.appendChild(ARButton.createButton(renderer, {
-        requiredFeatures: ['local-floor']
-    }));
+const wallRight = new THREE.Mesh(wallGeometryX, wallMaterial);
+wallRight.position.set(5, 1.5, 0);
+wallRight.rotation.y = -Math.PI / 2;
+scene.add(wallRight);
 
-    // ---------- FIZYKA ----------
-    world = new CANNON.World();
-    world.gravity.set(0, -6, 0);
-    world.solver.iterations = 20;
-    world.allowSleep = true;
+const wallFront = new THREE.Mesh(wallGeometryZ, wallMaterial);
+wallFront.position.set(0, 1.5, -5);
+scene.add(wallFront);
 
-    const floor = new CANNON.Body({
-        type: CANNON.Body.STATIC,
-        shape: new CANNON.Plane(),
-    });
-    floor.quaternion.setFromEuler(-Math.PI / 2, 0, 0);
-    floor.position.y = -1;
-    world.addBody(floor);
+const wallBack = new THREE.Mesh(wallGeometryZ, wallMaterial);
+wallBack.position.set(0, 1.5, 5);
+wallBack.rotation.y = Math.PI;
+scene.add(wallBack);
 
-    const light = new THREE.HemisphereLight(0xffffff, 0x444444, 1);
-    scene.add(light);
+// Kontrolery / ręce VR
+const controllerModelFactory = new XRControllerModelFactory();
+const handModelFactory = new XRHandModelFactory();
 
-    // ---------- KOSZ NA ŚMIECI Z MODELEM PALM.GLB ----------
-    const loader = new GLTFLoader();
-    loader.load('palm.glb', (gltf) => {
-        trashMesh = gltf.scene;
-        trashMesh.scale.set(0.5, 0.5, 0.5); // dopasuj rozmiar
-        trashMesh.position.set(0, -0.85, -1);
-        scene.add(trashMesh);
+const controllers = [];
+for(let i=0;i<2;i++){
+  const controller = renderer.xr.getController(i);
+  scene.add(controller);
+  controllers.push(controller);
 
-        // przybliżony box fizyczny
-        const box = new CANNON.Box(new CANNON.Vec3(0.25, 0.25, 0.25));
-        trashBody = new CANNON.Body({ mass: 0 });
-        trashBody.addShape(box);
-        trashBody.position.set(0, -0.85, -1);
-        world.addBody(trashBody);
-    });
+  const grip = renderer.xr.getControllerGrip(i);
+  grip.add(controllerModelFactory.createControllerModel(grip));
+  scene.add(grip);
 
-    // ---------- KONTROLERY ----------
-    for(let i = 0; i < 2; i++){
-        const controller = renderer.xr.getController(i);
-        controller.userData.selected = null;
-        controller.userData.velocity = new CANNON.Vec3(0,0,0);
-
-        controller.addEventListener('selectstart', ()=>{
-            if(!musicStarted) {
-                backgroundMusic.play().catch(err => console.log("Muzyka nie mogła się odtworzyć:", err));
-                musicStarted = true;
-            }
-            createCube(controller);
-        });
-
-        controller.addEventListener('squeezestart', ()=>{ grabCube(controller); });
-        controller.addEventListener('squeezeend', ()=>{ releaseCube(controller); });
-
-        // ---------- WIRTUALNE RECE ----------
-        const geometry = new THREE.CylinderGeometry(0.02, 0.02, 0.1, 8);
-        const material = new THREE.MeshStandardMaterial({ color: i===0 ? 0xff0000 : 0x0000ff });
-        const handMesh = new THREE.Mesh(geometry, material);
-        handMesh.rotation.x = Math.PI/2;
-        controller.add(handMesh);
-
-        scene.add(controller);
-        controllers.push(controller);
-    }
-
-    window.addEventListener('resize', onWindowResize);
+  // wirtualne ręce
+  const hand = renderer.xr.getHand(i);
+  hand.add(handModelFactory.createHandModel(hand, "mesh"));
+  scene.add(hand);
 }
 
-/* ---------- KOSTKA ---------- */
-function createCube(controller){
-    const pos = new THREE.Vector3();
-    controller.getWorldPosition(pos);
-    const dir = new THREE.Vector3(0,0,-1).applyQuaternion(controller.quaternion);
-    pos.add(dir.multiplyScalar(0.6));
-    const size = 0.12;
-
-    const geo = new THREE.BoxGeometry(size, size, size);
-    const mat = new THREE.MeshStandardMaterial({ color: new THREE.Color(Math.random(), Math.random(), Math.random()) });
-    const mesh = new THREE.Mesh(geo, mat);
-    mesh.position.copy(pos);
-    scene.add(mesh);
-
-    const body = new CANNON.Body({
-        mass: 1,
-        shape: new CANNON.Box(new CANNON.Vec3(size/2, size/2, size/2))
-    });
-    body.position.set(pos.x, pos.y, pos.z);
-    body.linearDamping = 0.5;
-    body.angularDamping = 0.5;
-    body.sleepSpeedLimit = 0.1;
-    body.sleepTimeLimit = 1;
-    world.addBody(body);
-
-    cubes.push({ mesh, body, grabbed: false, size, played: false });
-
-    addSound.currentTime = 0;
-    addSound.play();
-}
-
-/* ---------- CHWYT ---------- */
-function grabCube(controller){
-    const pos = new THREE.Vector3();
-    controller.getWorldPosition(pos);
-    for (let cube of cubes){
-        if (!cube.grabbed && cube.mesh.position.distanceTo(pos) < 0.2){
-            cube.grabbed = true;
-            cube.body.type = CANNON.Body.KINEMATIC;
-            cube.body.velocity.set(0,0,0);
-            cube.body.angularVelocity.set(0,0,0);
-            cube.body.wakeUp();
-
-            controller.attach(cube.mesh);
-            cube.mesh.position.set(0, 0, 0);
-
-            controller.userData.selected = cube;
-            break;
-        }
-    }
-}
-
-/* ---------- RZUT ---------- */
-function releaseCube(controller){
-    const cube = controller.userData.selected;
-    if(!cube) return;
-
-    cube.grabbed = false;
-    scene.attach(cube.mesh);
-
-    cube.body.type = CANNON.Body.DYNAMIC;
-    cube.body.mass = 1;
-    cube.body.updateMassProperties();
-    cube.body.wakeUp();
-
-    const vel = controller.userData.velocity;
-    cube.body.velocity.set(vel.x*2, vel.y*2, vel.z*2);
-    cube.body.angularVelocity.set(
-        (Math.random()-0.5)*2,
-        (Math.random()-0.5)*2,
-        (Math.random()-0.5)*2
-    );
-
-    controller.userData.selected = null;
-}
-
-/* ---------- PRĘDKOŚĆ KONTROLERA ---------- */
-function updateControllerVelocity(){
-    controllers.forEach((controller, i)=>{
-        const pos = new THREE.Vector3();
-        controller.getWorldPosition(pos);
-        if (prevPos[i]){
-            const v = pos.clone().sub(prevPos[i]).multiplyScalar(60);
-            controller.userData.velocity.set(v.x, v.y, v.z);
-        }
-        prevPos[i] = pos.clone();
-    });
-}
-
-/* ---------- KOSZ FUNKCJA ---------- */
-function checkTrash() {
-    if(!trashBody) return; // upewniamy się, że model jest załadowany
-    for (let i = cubes.length-1; i >= 0; i--) {
-        const cube = cubes[i];
-        const dx = cube.body.position.x - trashBody.position.x;
-        const dy = cube.body.position.y - trashBody.position.y;
-        const dz = cube.body.position.z - trashBody.position.z;
-        const distance = Math.sqrt(dx*dx + dy*dy + dz*dz);
-        if(distance < 0.2) {
-            world.removeBody(cube.body);
-            scene.remove(cube.mesh);
-            cubes.splice(i, 1);
-        }
-    }
-}
-
-/* ---------- LOOP ---------- */
+// Prosta animacja
 function animate(){
-    renderer.setAnimationLoop(()=>{
-        world.step(1/60);
-
-        for (let i = cubes.length-1; i>=0; i--){
-            const cube = cubes[i];
-            if(!cube.grabbed){
-                cube.mesh.position.copy(cube.body.position);
-                cube.mesh.quaternion.copy(cube.body.quaternion);
-
-                if(!cube.played && cube.body.position.y <= -0.9){
-                    const speed = cube.body.velocity.length();
-                    if(speed > 1){
-                        throwSound.volume = Math.min(speed/1, 1);
-                        throwSound.currentTime = 0;
-                        throwSound.play();
-                    }
-                    cube.played = true;
-                }
-            } else {
-                const ctrl = controllers.find(c => c.userData.selected === cube);
-                if(ctrl){
-                    const p = new THREE.Vector3();
-                    ctrl.getWorldPosition(p);
-                    cube.body.position.set(p.x, p.y, p.z);
-                }
-            }
-        }
-
-        updateControllerVelocity();
-        checkTrash(); // sprawdzamy czy kostka wpadła do kosza
-        renderer.render(scene, camera);
-    });
+  renderer.setAnimationLoop(render);
 }
 
-/* ---------- RESIZE ---------- */
-function onWindowResize(){
-    camera.aspect = innerWidth/innerHeight;
-    camera.updateProjectionMatrix();
-    renderer.setSize(innerWidth, innerHeight);
+function render(){
+  renderer.render(scene, camera);
 }
+
+// Resize
+window.addEventListener('resize', ()=>{
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+animate();
 </script>
 </body>
 </html>
